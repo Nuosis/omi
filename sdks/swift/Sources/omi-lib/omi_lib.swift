@@ -32,7 +32,7 @@ public class OmiManager {
 
   public static func endScan() {
     self.friend_singleton.deviceCompletion = nil
-    self.friend_singleton.bluetoothScanner.centralManager.stopScan()
+    self.friend_singleton.bluetoothScanner.stopScan()
   }
 
   public static func connectToDevice(device: Device) {
