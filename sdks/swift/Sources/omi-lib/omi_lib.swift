@@ -19,7 +19,9 @@ public class OmiManager {
   public static func startScan(completion: ((Device?, Error?) -> Void)?) {
     friend_singleton.deviceCompletion = { device, error in
       if let id = device?.id.uuidString {
-        if singleton.seen_devices.firstIndex(where: { $0.id.uuidString == id }) == nil {
+        if let index = singleton.seen_devices.firstIndex(where: { $0.id.uuidString == id }) {
+          singleton.seen_devices[index] = device!
+        } else {
           singleton.seen_devices.append(device!)
         }
         completion?(Device(id: id), nil)
@@ -49,6 +51,13 @@ public class OmiManager {
   public static func getLiveTranscription(device: Device, completion: @escaping (String?) -> Void) {
     if let device = self.singleton.seen_devices.first(where: { $0.id.uuidString == device.id }) {
       self.friend_singleton.getLiveTranscription(device: device, completion: completion)
+    }
+  }
+
+  public static func stopLiveTranscription(device: Device) {
+    if let index = singleton.seen_devices.firstIndex(where: { $0.id.uuidString == device.id }) {
+      let friend = singleton.seen_devices.remove(at: index)
+      friend_singleton.stopLiveTranscription(device: friend)
     }
   }
 

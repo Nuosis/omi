@@ -24,6 +24,39 @@ func makeOmiAudioSnapshot(from sourceURL: URL) throws -> URL {
     }
 }
 
+struct OmiTranscriptionGate {
+    private(set) var generation = UUID()
+    private(set) var active = false
+    private(set) var intervalInFlight = false
+
+    mutating func start() -> UUID {
+        generation = UUID()
+        active = true
+        intervalInFlight = false
+        return generation
+    }
+
+    mutating func beginInterval(for candidate: UUID) -> Bool {
+        guard active, candidate == generation, !intervalInFlight else {
+            return false
+        }
+        intervalInFlight = true
+        return true
+    }
+
+    mutating func finishInterval(for candidate: UUID) -> Bool {
+        guard active, candidate == generation else { return false }
+        intervalInFlight = false
+        return true
+    }
+
+    mutating func stop() {
+        active = false
+        intervalInFlight = false
+        generation = UUID()
+    }
+}
+
 class FriendManager {
     
     static var singleton = FriendManager()
@@ -43,6 +76,7 @@ class FriendManager {
     
     var transcriptTimer: Timer?
     var audioFileTimer: Timer?
+    var transcriptionGate = OmiTranscriptionGate()
 
     init() {
         let modelURL = Bundle.module.url(forResource: "ggml-tiny.en", withExtension: "bin")!
@@ -101,11 +135,17 @@ class FriendManager {
     func getLiveTranscription(device: Friend, completion: @escaping (String?) -> Void) {
         transcriptCompletion = completion
         transcriptTimer?.invalidate()
+        let transcriptionGeneration = transcriptionGate.start()
         print("[Omi] live transcription timer started")
         transcriptTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
+            guard self.transcriptionGate.beginInterval(for: transcriptionGeneration) else {
+                print("[Omi] transcription interval skipped")
+                return
+            }
             print("[Omi] transcription interval fired")
             do {
                 guard let snapshotURL = try device.snapshotRecording() else {
+                    _ = self.transcriptionGate.finishInterval(for: transcriptionGeneration)
                     print("[Omi] no active recording to snapshot")
                     completion(nil)
                     return
@@ -118,15 +158,35 @@ class FriendManager {
                 }
 
                 self.transcribeAudio(url: snapshotURL, completion: { result, error in
-                    try? FileManager.default.removeItem(at: snapshotURL)
-                    print("[Omi] transcription completed characters=\(result?.count ?? 0) error=\(error?.localizedDescription ?? "none")")
-                    completion(result)
+                    DispatchQueue.main.async {
+                        try? FileManager.default.removeItem(at: snapshotURL)
+                        let shouldDeliver = self.transcriptionGate.finishInterval(
+                            for: transcriptionGeneration
+                        )
+                        print("[Omi] transcription completed characters=\(result?.count ?? 0) error=\(error?.localizedDescription ?? "none") deliver=\(shouldDeliver)")
+                        if shouldDeliver {
+                            completion(result)
+                        }
+                    }
                 })
             } catch {
+                _ = self.transcriptionGate.finishInterval(for: transcriptionGeneration)
                 print("Failed to snapshot Omi audio: \(error.localizedDescription)")
                 completion(nil)
             }
         })
+    }
+
+    func stopLiveTranscription(device: Friend) {
+        print("[Omi] stopping live transcription")
+        transcriptTimer?.invalidate()
+        transcriptTimer = nil
+        audioFileTimer?.invalidate()
+        audioFileTimer = nil
+        transcriptCompletion = nil
+        transcriptionGate.stop()
+        device.stopRecording()
+        device.bleManager.disconnect()
     }
     
     /// Provides audio chunks from the Omi device every 8 seconds.
