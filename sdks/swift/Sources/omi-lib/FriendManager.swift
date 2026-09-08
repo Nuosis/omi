@@ -288,15 +288,13 @@ class FriendManager {
 
 extension FriendManager: BluetoothScannerDelegate {
     func deviceFound(device: CBPeripheral) {
-        if device.name == "Friend" || device.name == "Friend DevKit 2" || device.name == "Omi DevKit 2" {
-            print("found friend device")
-            WearableDeviceRegistry.shared.registerDevice(wearable: Friend.self)
-            self.bleManager = BLEManager(deviceRegistry: WearableDeviceRegistry.shared)
-            self.bleManager?.delegate = self
-            let friend_device = Friend(bleManager: bleManager!, name: "Friend")
-            friend_device.id = device.identifier
-            self.deviceCompletion?(friend_device, nil)
-        }
+        print("found friend device")
+        WearableDeviceRegistry.shared.registerDevice(wearable: Friend.self)
+        self.bleManager = BLEManager(deviceRegistry: WearableDeviceRegistry.shared)
+        self.bleManager?.delegate = self
+        let friend_device = Friend(bleManager: bleManager!, name: "Friend")
+        friend_device.id = device.identifier
+        self.deviceCompletion?(friend_device, nil)
     }
     
     func connectToDevice(device: Friend) {
@@ -351,6 +349,26 @@ protocol BluetoothScannerDelegate: AnyObject {
     func deviceFound(device: CBPeripheral)
 }
 
+private let supportedOmiPeripheralNames: Set<String> = [
+    "Friend",
+    "Friend DevKit 2",
+    "Omi",
+    "Omi DevKit 2",
+]
+
+func isSupportedOmiPeripheralName(_ name: String?) -> Bool {
+    guard let name else { return false }
+    return supportedOmiPeripheralNames.contains(name)
+}
+
+func isSupportedOmiPeripheral(
+    peripheralName: String?,
+    advertisedName: String?
+) -> Bool {
+    isSupportedOmiPeripheralName(peripheralName)
+        || isSupportedOmiPeripheralName(advertisedName)
+}
+
 class BluetoothScanner: NSObject, CBCentralManagerDelegate {
     weak var delegate: BluetoothScannerDelegate?
     var centralManager: CBCentralManager!
@@ -379,7 +397,11 @@ class BluetoothScanner: NSObject, CBCentralManagerDelegate {
 
     // This is called when a new peripheral (device) is discovered during scanning
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        if let name = peripheral.name, name == "Friend" || name == "Friend DevKit 2" || name == "Omi DevKit 2" {
+        let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        if isSupportedOmiPeripheral(
+            peripheralName: peripheral.name,
+            advertisedName: advertisedName
+        ) {
             self.delegate?.deviceFound(device: peripheral)
         }
     }

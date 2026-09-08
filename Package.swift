@@ -30,9 +30,15 @@ let package = Package(
                 .product(name: "AudioKit", package: "AudioKit"),
             ],
             path: "sdks/swift",  // Correct the path to your source files
+            exclude: ["Tests"],
             resources: [
                 .process("Sources/omi-lib/Resources")  // Make sure this resource is in the correct directory
             ]
+        ),
+        .testTarget(
+            name: "OmiLibTests",
+            dependencies: ["omi-lib"],
+            path: "sdks/swift/Tests/OmiLibTests"
         ),
     ]
 )
