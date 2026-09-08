@@ -39,6 +39,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     var packetCounter = PacketCounter()
     private var packetsBuffer = [AudioPacket]()
     private var loggedFirstAudioPacket = false
+    var onAudioPacketBoundary: ((TimeInterval) -> Void)?
     
     required init(bleManager: BLEManager, name: String) {
         super.init(bleManager: bleManager, name: name)
@@ -92,7 +93,9 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
 
         if index == 0 {
             // Only flush if we're starting a new packet, otherwise we would split between packet content
-            flushRecordingBuffer()
+            if flushRecordingBuffer() {
+                onAudioPacketBoundary?(ProcessInfo.processInfo.systemUptime)
+            }
             packetsBuffer.append(AudioPacket(packetNumber: packetNumber))
         }
         if let packet = packetsBuffer.last {
@@ -153,10 +156,12 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
         return snapshotURL
     }
     
-    func flushRecordingBuffer() {
-        guard !packetsBuffer.isEmpty else { return }
+    @discardableResult
+    func flushRecordingBuffer() -> Bool {
+        guard !packetsBuffer.isEmpty else { return false }
         recording?.append(packets: packetsBuffer)
         packetsBuffer.removeAll()
+        return true
     }
     
     enum FriendCodec: UInt8 {

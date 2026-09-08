@@ -57,6 +57,35 @@ struct OmiTranscriptionGate {
     }
 }
 
+struct OmiPacketChunkScheduler {
+    let interval: TimeInterval
+    private var intervalStart: TimeInterval?
+
+    init(interval: TimeInterval) {
+        self.interval = interval
+    }
+
+    mutating func observePacket(at uptime: TimeInterval) -> Bool {
+        guard let intervalStart else {
+            self.intervalStart = uptime
+            return false
+        }
+
+        guard uptime >= intervalStart else {
+            self.intervalStart = uptime
+            return false
+        }
+
+        guard uptime - intervalStart >= interval else { return false }
+        self.intervalStart = uptime
+        return true
+    }
+
+    mutating func reset() {
+        intervalStart = nil
+    }
+}
+
 class FriendManager {
     
     static var singleton = FriendManager()
@@ -74,9 +103,9 @@ class FriendManager {
 
     let whisper: Whisper?
     
-    var transcriptTimer: Timer?
     var audioFileTimer: Timer?
     var transcriptionGate = OmiTranscriptionGate()
+    var transcriptionScheduler = OmiPacketChunkScheduler(interval: 8.0)
 
     init() {
         let modelURL = Bundle.module.url(forResource: "ggml-tiny.en", withExtension: "bin")!
@@ -134,15 +163,19 @@ class FriendManager {
     
     func getLiveTranscription(device: Friend, completion: @escaping (String?) -> Void) {
         transcriptCompletion = completion
-        transcriptTimer?.invalidate()
+        device.onAudioPacketBoundary = nil
+        transcriptionScheduler.reset()
         let transcriptionGeneration = transcriptionGate.start()
-        print("[Omi] live transcription timer started")
-        transcriptTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
+        print("[Omi] audio-driven live transcription started")
+        device.onAudioPacketBoundary = { [weak self, weak device] uptime in
+            guard let self, let device else { return }
+            guard !self.transcriptionGate.intervalInFlight else { return }
+            guard self.transcriptionScheduler.observePacket(at: uptime) else { return }
             guard self.transcriptionGate.beginInterval(for: transcriptionGeneration) else {
-                print("[Omi] transcription interval skipped")
                 return
             }
-            print("[Omi] transcription interval fired")
+
+            print("[Omi] packet-driven transcription interval fired")
             do {
                 guard let snapshotURL = try device.snapshotRecording() else {
                     _ = self.transcriptionGate.finishInterval(for: transcriptionGeneration)
@@ -152,8 +185,7 @@ class FriendManager {
                 }
                 if self.fileHasData(url: snapshotURL) {
                     print("file has data")
-                }
-                else {
+                } else {
                     print("no data in file")
                 }
 
@@ -174,13 +206,13 @@ class FriendManager {
                 print("Failed to snapshot Omi audio: \(error.localizedDescription)")
                 completion(nil)
             }
-        })
+        }
     }
 
     func stopLiveTranscription(device: Friend) {
         print("[Omi] stopping live transcription")
-        transcriptTimer?.invalidate()
-        transcriptTimer = nil
+        device.onAudioPacketBoundary = nil
+        transcriptionScheduler.reset()
         audioFileTimer?.invalidate()
         audioFileTimer = nil
         transcriptCompletion = nil
