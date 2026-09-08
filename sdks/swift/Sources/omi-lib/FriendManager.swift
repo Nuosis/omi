@@ -11,6 +11,19 @@ import AVFoundation
 import SwiftWhisper
 import AudioKit
 
+func makeOmiAudioSnapshot(from sourceURL: URL) throws -> URL {
+    let snapshotURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension("wav")
+    do {
+        try FileManager.default.copyItem(at: sourceURL, to: snapshotURL)
+        return snapshotURL
+    } catch {
+        try? FileManager.default.removeItem(at: snapshotURL)
+        throw error
+    }
+}
+
 class FriendManager {
     
     static var singleton = FriendManager()
@@ -89,21 +102,24 @@ class FriendManager {
         transcriptCompletion = completion
         transcriptTimer?.invalidate()
         transcriptTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
-            if let recording = device.recording {
-                let recordingFileURL = recording.fileURL
-                device.resetRecording()
-                if self.fileHasData(url: recordingFileURL) {
+            do {
+                guard let snapshotURL = try device.snapshotRecording() else {
+                    completion(nil)
+                    return
+                }
+                if self.fileHasData(url: snapshotURL) {
                     print("file has data")
                 }
                 else {
                     print("no data in file")
                 }
-                
-                self.transcribeAudio(url: recordingFileURL, completion: { result, error in
+
+                self.transcribeAudio(url: snapshotURL, completion: { result, error in
+                    try? FileManager.default.removeItem(at: snapshotURL)
                     completion(result)
                 })
-            }
-            else {
+            } catch {
+                print("Failed to snapshot Omi audio: \(error.localizedDescription)")
                 completion(nil)
             }
         })
@@ -111,61 +127,52 @@ class FriendManager {
     
     /// Provides audio chunks from the Omi device every 8 seconds.
     ///
-    /// Important: The recording file is copied to a temp location before `resetRecording()` is called,
-    /// because `resetRecording()` deletes the original file. The WAV header in the copied file may
-    /// show 0 bytes of audio data (since the file is still being written to), but the actual PCM
-    /// data exists after the 44-byte header.
+    /// Each completed segment is flushed and copied before the active recording rotates.
     func getRawAudio(device: Friend, completion: @escaping (URL?) -> Void) {
         audioFileTimer?.invalidate()
         audioFileTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
-            guard let recording = device.recording else {
-                completion(nil)
-                return
-            }
-
-            let recordingFileURL = recording.fileURL
-            let fileManager = FileManager.default
-
-            // Check if file exists and has audio data (more than just the 44-byte WAV header)
-            let attributes = try? fileManager.attributesOfItem(atPath: recordingFileURL.path)
-            let fileSize = attributes?[.size] as? UInt64 ?? 0
-
-            guard fileSize > 44 else {
-                completion(nil)
-                return
-            }
-
-            // Copy file to temp location BEFORE resetRecording() deletes the original
-            let tempURL = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent(UUID().uuidString + ".wav")
-
             do {
-                try fileManager.copyItem(at: recordingFileURL, to: tempURL)
-                device.resetRecording()
-                completion(tempURL)
+                guard let snapshotURL = try device.snapshotRecording() else {
+                    completion(nil)
+                    return
+                }
+                let attributes = try? FileManager.default.attributesOfItem(
+                    atPath: snapshotURL.path
+                )
+                let fileSize = attributes?[.size] as? UInt64 ?? 0
+                guard fileSize > 44 else {
+                    try? FileManager.default.removeItem(at: snapshotURL)
+                    completion(nil)
+                    return
+                }
+                completion(snapshotURL)
             } catch {
-                device.resetRecording()
                 completion(nil)
             }
         })
     }
     
     func getCurrentTranscription(completion: @escaping (String?) -> Void) {
-        if let friendDevice = self.friendDevice, let recording = friendDevice.recording {
-            let recordingFileURL = recording.fileURL
-            self.friendDevice?.resetRecording()
-            if self.fileHasData(url: recordingFileURL) {
-                print("file has data")
+        guard let friendDevice = self.friendDevice else {
+            completion(nil)
+            return
+        }
+        do {
+            guard let snapshotURL = try friendDevice.snapshotRecording() else {
+                completion(nil)
+                return
             }
-            else {
+            if self.fileHasData(url: snapshotURL) {
+                print("file has data")
+            } else {
                 print("no data in file")
             }
-            
-            self.transcribeAudio(url: recordingFileURL, completion: { result, error in
+
+            self.transcribeAudio(url: snapshotURL, completion: { result, error in
+                try? FileManager.default.removeItem(at: snapshotURL)
                 completion(result)
             })
-        }
-        else {
+        } catch {
             completion(nil)
         }
     }

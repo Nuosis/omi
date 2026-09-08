@@ -28,7 +28,11 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     
     private var codec: FriendCodec? {
         didSet {
-            status = .ready
+            if codec == nil {
+                status = .error(message: "Unsupported audio codec")
+            } else {
+                status = .ready
+            }
         }
     }
     
@@ -132,6 +136,14 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
         flushRecordingBuffer()
         recording?.updateFileURL()
     }
+
+    func snapshotRecording() throws -> URL? {
+        flushRecordingBuffer()
+        guard let recording else { return nil }
+        let snapshotURL = try makeOmiAudioSnapshot(from: recording.fileURL)
+        recording.updateFileURL()
+        return snapshotURL
+    }
     
     func flushRecordingBuffer() {
         guard !packetsBuffer.isEmpty else { return }
@@ -142,7 +154,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     enum FriendCodec: UInt8 {
         case pcm16 = 0, pcm8
         case µLaw16 = 10, µLaw8
-        case opus16 = 20
+        case opus16 = 20, opusFS320
         
         var codec: Codec {
             get throws {
@@ -155,7 +167,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
                     return PcmCodec(sampleRate: 16000.0)
                 case .µLaw16:
                     return µLawCodec(sampleRate: 16000.0)
-                case .opus16:
+                case .opus16, .opusFS320:
                     return try OpusCodec(sampleRate: 16000.0)
                 }
             }
