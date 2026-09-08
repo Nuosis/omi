@@ -104,6 +104,7 @@ extension BLEManager : CBCentralManagerDelegate {
     
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = .connected
+        print("[Omi] BLE connected")
         self.peripheral = peripheral
         log.info("Did connect to peripheral with identifier: \(peripheral.identifier)")
         peripheral.delegate = self
@@ -132,6 +133,7 @@ extension BLEManager : CBCentralManagerDelegate {
 
 extension BLEManager : CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
+        print("[Omi] services discovered count=\(peripheral.services?.count ?? 0) error=\(error?.localizedDescription ?? "none")")
         if let services = peripheral.services {
             for service in services {
                 if let wearable = deviceRegistry.deviceTypeForService(uuid: service.uuid) {
@@ -149,6 +151,7 @@ extension BLEManager : CBPeripheralDelegate {
     }
     
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: (any Error)?) {
+        print("[Omi] characteristics discovered service=\(service.uuid.uuidString) count=\(service.characteristics?.count ?? 0) error=\(error?.localizedDescription ?? "none")")
         if let characteristics = service.characteristics {
             for c in characteristics {
                 characteristicsRegistry[c.uuid] = c

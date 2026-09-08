@@ -101,9 +101,12 @@ class FriendManager {
     func getLiveTranscription(device: Friend, completion: @escaping (String?) -> Void) {
         transcriptCompletion = completion
         transcriptTimer?.invalidate()
+        print("[Omi] live transcription timer started")
         transcriptTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
+            print("[Omi] transcription interval fired")
             do {
                 guard let snapshotURL = try device.snapshotRecording() else {
+                    print("[Omi] no active recording to snapshot")
                     completion(nil)
                     return
                 }
@@ -116,6 +119,7 @@ class FriendManager {
 
                 self.transcribeAudio(url: snapshotURL, completion: { result, error in
                     try? FileManager.default.removeItem(at: snapshotURL)
+                    print("[Omi] transcription completed characters=\(result?.count ?? 0) error=\(error?.localizedDescription ?? "none")")
                     completion(result)
                 })
             } catch {
@@ -205,7 +209,8 @@ class FriendManager {
     }
     
     func startScan() {
-        self.bluetoothScanner.centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        print("[Omi] scan requested")
+        bluetoothScanner.startScan()
     }
     
     func startRecordingWhenReady() {
@@ -226,10 +231,12 @@ class FriendManager {
     func startRecordingWhenReady(device: Friend) {
         switch device.status {
             case .ready:
+                print("[Omi] device ready; starting recording")
                 let uuidString = UUID().uuidString
                 let recording = Recording(filename: "\(uuidString).wav")  // Your custom recording handler
                 device.start(recording: recording)
             case .error(_):
+                print("[Omi] waiting for device codec")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: {
                     self.startRecordingWhenReady(device: device)
                 })
@@ -295,7 +302,7 @@ class FriendManager {
 
 extension FriendManager: BluetoothScannerDelegate {
     func deviceFound(device: CBPeripheral) {
-        print("found friend device")
+        print("[Omi] discovered supported device name=\(device.name ?? "unknown")")
         WearableDeviceRegistry.shared.registerDevice(wearable: Friend.self)
         self.bleManager = BLEManager(deviceRegistry: WearableDeviceRegistry.shared)
         self.bleManager?.delegate = self
@@ -305,6 +312,7 @@ extension FriendManager: BluetoothScannerDelegate {
     }
     
     func connectToDevice(device: Friend) {
+        print("[Omi] connecting to discovered device")
         let deviceUUID = device.id
         bleManager!.reconnect(to: deviceUUID)
         self.connectionCompletion?(true)
@@ -363,6 +371,10 @@ private let supportedOmiPeripheralNames: Set<String> = [
     "Omi DevKit 2",
 ]
 
+func shouldRunOmiScan(scanRequested: Bool, bluetoothPoweredOn: Bool) -> Bool {
+    scanRequested && bluetoothPoweredOn
+}
+
 func isSupportedOmiPeripheralName(_ name: String?) -> Bool {
     guard let name else { return false }
     return supportedOmiPeripheralNames.contains(name)
@@ -379,6 +391,7 @@ func isSupportedOmiPeripheral(
 class BluetoothScanner: NSObject, CBCentralManagerDelegate {
     weak var delegate: BluetoothScannerDelegate?
     var centralManager: CBCentralManager!
+    private var scanRequested = false
     
     override init() {
         super.init()
@@ -386,13 +399,37 @@ class BluetoothScanner: NSObject, CBCentralManagerDelegate {
         centralManager = CBCentralManager(delegate: self, queue: nil)
     }
 
+    func startScan() {
+        scanRequested = true
+        print("[Omi] scanner request registered")
+        updateScanState()
+    }
+
+    func stopScan() {
+        scanRequested = false
+        print("[Omi] scanner stopped")
+        centralManager.stopScan()
+    }
+
+    private func updateScanState() {
+        guard shouldRunOmiScan(
+            scanRequested: scanRequested,
+            bluetoothPoweredOn: centralManager.state == .poweredOn
+        ) else { return }
+        print("[Omi] BLE scan started")
+        centralManager.stopScan()
+        centralManager.scanForPeripherals(
+            withServices: nil,
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+    }
+
     // This is called when the central manager's state is updated (e.g., Bluetooth is turned on/off)
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
-            // Bluetooth is powered on and available, you can start scanning
-            print("ready to start scan")
-            centralManager.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            print("[Omi] Bluetooth powered on")
+            updateScanState()
         case .poweredOff:
             print("Bluetooth is off.")
         case .resetting, .unauthorized, .unknown, .unsupported:
@@ -408,7 +445,10 @@ class BluetoothScanner: NSObject, CBCentralManagerDelegate {
         if isSupportedOmiPeripheral(
             peripheralName: peripheral.name,
             advertisedName: advertisedName
-        ) {
+        ), scanRequested {
+            print("[Omi] requested scan matched supported device")
+            scanRequested = false
+            centralManager.stopScan()
             self.delegate?.deviceFound(device: peripheral)
         }
     }

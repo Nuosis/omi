@@ -38,6 +38,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     
     var packetCounter = PacketCounter()
     private var packetsBuffer = [AudioPacket]()
+    private var loggedFirstAudioPacket = false
     
     required init(bleManager: BLEManager, name: String) {
         super.init(bleManager: bleManager, name: name)
@@ -71,6 +72,10 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     }
     
     private func audioCharacteristicUpdated(data: Data) {
+        if !loggedFirstAudioPacket {
+            loggedFirstAudioPacket = true
+            print("[Omi] first audio packet bytes=\(data.count)")
+        }
         guard data.count >= 3 else {
             log.warning("### Received a packet of size \(data.count)")
             return
@@ -98,6 +103,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     private func audioCodecCharacteristicUpdated(data: Data) {
         let codecType = UInt8(littleEndian: data.withUnsafeBytes { $0.load(as: UInt8.self) })
         codec = FriendCodec(rawValue: codecType)
+        print("[Omi] codec type=\(codecType) supported=\(codec != nil)")
         log.info("Codec type \(codecType)")
     }
     
@@ -110,6 +116,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     
     func start(recording: Recording) {
         self.recording = recording
+        print("[Omi] recording start requested")
 
         guard let audioCodec = try? codec?.codec else {
             log.error("No codec available for recording")
@@ -117,6 +124,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
         }
         if recording.startRecording(usingCodec: audioCodec) {
             isRecording = true
+            print("[Omi] recording started")
             bleManager.setNotify(enabled: true, forCharacteristics: Friend.audioCharacteristicUUID)
         }
         else {
