@@ -27,6 +27,9 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     var recording: Recording?
     
     var onReady: (() -> Void)?
+    var shouldCaptureAudio: (() -> Bool)?
+    var onCapturePaused: (() -> Void)?
+    private var capturePaused = false
 
     private var codec: FriendCodec? {
         didSet {
@@ -83,6 +86,22 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
         guard data.count >= 3 else {
             log.warning("### Received a packet of size \(data.count)")
             return
+        }
+
+        // Keep BLE notifications for background wakeups, but never decode or
+        // write packets while the caller has suspended recording.
+        if shouldCaptureAudio?() == false {
+            packetsBuffer.removeAll()
+            if !capturePaused {
+                capturePaused = true
+                onCapturePaused?()
+            }
+            return
+        }
+        if capturePaused {
+            capturePaused = false
+            packetsBuffer.removeAll()
+            packetCounter.reset()
         }
 
         let packetNumber = UInt16(littleEndian: data.withUnsafeBytes { $0.load(as: UInt16.self) })

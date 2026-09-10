@@ -70,6 +70,12 @@ public class OmiManager {
     }
   }
 
+  /// Evaluated on BLE packets, including while paused, so background callers
+  /// can refresh their policy without disconnecting the paired device.
+  public static func setAudioCapturePolicy(device: Device, shouldCapture: @escaping () -> Bool) {
+    singleton.seen_devices.first(where: { $0.id.uuidString == device.id })?.shouldCaptureAudio = shouldCapture
+  }
+
   public static func getLiveAudio(device: Device, completion: @escaping (URL?) -> Void) {
     if let device = self.singleton.seen_devices.first(where: { $0.id.uuidString == device.id }) {
       self.friend_singleton.getRawAudio(device: device, completion: completion)

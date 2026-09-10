@@ -139,3 +139,15 @@ Focused verification: `swift test --filter 'OmiRecording|OmiPacket'` exercises
 WAV rotation/frame preservation, packet scheduling, codec-triggered recording,
 and cancellation before another codec event. These are functional software
 tests, not evidence of a real iPhone/Omi background power cycle or battery life.
+
+### Temporary capture suspension
+
+`OmiManager.setAudioCapturePolicy(device:shouldCapture:)` evaluates the predicate
+on BLE audio notifications. False skips decoding and WAV writes while retaining
+BLE notifications for background wakeups. Raw capture finalizes the pre-pause
+WAV once, drops the in-flight partial packet, and starts a new interval on resume.
+Stop still disconnects and clears the policy. Caller owns call/meeting detection.
+
+Verification: `swift test --filter Omi` includes a PCM packet → WAV pause/resume
+check. It exercises the production BLE subject/recorder boundary, not physical
+Bluetooth delivery or locked-iPhone scheduling.

@@ -213,6 +213,8 @@ class FriendManager {
 
     func stopLiveTranscription(device: Friend) {
         print("[Omi] stopping live transcription")
+        device.shouldCaptureAudio = nil
+        device.onCapturePaused = nil
         device.onReady = nil
         device.onAudioPacketBoundary = nil
         transcriptionScheduler.reset()
@@ -236,6 +238,11 @@ class FriendManager {
         audioFileTimer?.invalidate()
         rawAudioCompletion = completion
         rawAudioScheduler.reset()
+        device.onCapturePaused = { [weak self, weak device] in
+            self?.rawAudioScheduler.reset()
+            do { completion(try device?.snapshotRecording()) }
+            catch { completion(nil) }
+        }
         device.onAudioPacketBoundary = { [weak self, weak device] uptime in
             guard let self, let device,
                   self.rawAudioScheduler.observePacket(at: uptime) else { return }
