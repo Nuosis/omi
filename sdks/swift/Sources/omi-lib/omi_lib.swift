@@ -43,6 +43,15 @@ public class OmiManager {
     }
   }
 
+  /// Prepare a previously paired device; connectToDevice then waits for its power-on.
+  public static func knownDevice(id: String) -> Device? {
+    guard let uuid = UUID(uuidString: id) else { return nil }
+    if !singleton.seen_devices.contains(where: { $0.id == uuid }) {
+      singleton.seen_devices.append(friend_singleton.knownDevice(id: uuid))
+    }
+    return Device(id: uuid.uuidString)
+  }
+
   public static func connectionUpdated(completion: @escaping (Bool) -> Void) {
     self.friend_singleton.connectionStatus(completion: completion)
   }

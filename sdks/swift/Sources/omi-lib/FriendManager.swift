@@ -87,6 +87,8 @@ struct OmiPacketChunkScheduler {
 }
 
 class FriendManager {
+    private var rawAudioCompletion: ((URL?) -> Void)?
+    private var rawAudioScheduler = OmiPacketChunkScheduler(interval: 30)
     
     static var singleton = FriendManager()
    
@@ -101,16 +103,16 @@ class FriendManager {
     var connectionCompletion: ((Bool) -> Void)?
     let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
 
-    let whisper: Whisper?
+    lazy var whisper: Whisper? = {
+        let modelURL = Bundle.module.url(forResource: "ggml-tiny.en", withExtension: "bin")!
+        return Whisper(fromFileURL: modelURL)
+    }()
     
     var audioFileTimer: Timer?
     var transcriptionGate = OmiTranscriptionGate()
     var transcriptionScheduler = OmiPacketChunkScheduler(interval: 8.0)
 
     init() {
-        let modelURL = Bundle.module.url(forResource: "ggml-tiny.en", withExtension: "bin")!
-        whisper = Whisper(fromFileURL: modelURL)
-        // whisper = nil
         bluetoothScanner = BluetoothScanner()
         bluetoothScanner.delegate = self
     }
@@ -211,6 +213,7 @@ class FriendManager {
 
     func stopLiveTranscription(device: Friend) {
         print("[Omi] stopping live transcription")
+        device.onReady = nil
         device.onAudioPacketBoundary = nil
         transcriptionScheduler.reset()
         audioFileTimer?.invalidate()
@@ -218,36 +221,29 @@ class FriendManager {
         transcriptCompletion = nil
         transcriptionGate.stop()
         device.stopRecording()
+        if let completion = rawAudioCompletion, let recording = device.recording {
+            completion(recording.fileURL)
+        }
+        rawAudioCompletion = nil
+        rawAudioScheduler.reset()
+        device.bleManager.stopConnecting()
         device.bleManager.disconnect()
     }
     
-    /// Provides audio chunks from the Omi device every 8 seconds.
-    ///
-    /// Each completed segment is flushed and copied before the active recording rotates.
+    /// Packet-driven capture remains active with the screen locked. The caller
+    /// owns each finalized WAV and must move it into its persistent upload queue.
     func getRawAudio(device: Friend, completion: @escaping (URL?) -> Void) {
         audioFileTimer?.invalidate()
-        audioFileTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: true, block: { timer in
-            do {
-                guard let snapshotURL = try device.snapshotRecording() else {
-                    completion(nil)
-                    return
-                }
-                let attributes = try? FileManager.default.attributesOfItem(
-                    atPath: snapshotURL.path
-                )
-                let fileSize = attributes?[.size] as? UInt64 ?? 0
-                guard fileSize > 44 else {
-                    try? FileManager.default.removeItem(at: snapshotURL)
-                    completion(nil)
-                    return
-                }
-                completion(snapshotURL)
-            } catch {
-                completion(nil)
-            }
-        })
+        rawAudioCompletion = completion
+        rawAudioScheduler.reset()
+        device.onAudioPacketBoundary = { [weak self, weak device] uptime in
+            guard let self, let device,
+                  self.rawAudioScheduler.observePacket(at: uptime) else { return }
+            do { completion(try device.snapshotRecording()) }
+            catch { completion(nil) }
+        }
     }
-    
+
     func getCurrentTranscription(completion: @escaping (String?) -> Void) {
         guard let friendDevice = self.friendDevice else {
             completion(nil)
@@ -321,21 +317,13 @@ class FriendManager {
     }
     
     func startRecordingWhenReady(device: Friend) {
-        switch device.status {
-            case .ready:
-                print("[Omi] device ready; starting recording")
-                let uuidString = UUID().uuidString
-                let recording = Recording(filename: "\(uuidString).wav")  // Your custom recording handler
-                device.start(recording: recording)
-            case .error(_):
-                print("[Omi] waiting for device codec")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: {
-                    self.startRecordingWhenReady(device: device)
-                })
+        device.onReady = { [weak device] in
+            guard let device, !device.isRecording else { return }
+            device.start(recording: Recording(filename: "\(UUID().uuidString).wav"))
         }
+        if case .ready = device.status { device.onReady?() }
     }
-    
-    
+
     func startRealTimeTranscription(from url: URL) {
         guard let recognizer = recognizer else {
             print("Speech recognizer is not available")
@@ -403,16 +391,29 @@ extension FriendManager: BluetoothScannerDelegate {
         self.deviceCompletion?(friend_device, nil)
     }
     
+    func knownDevice(id: UUID) -> Friend {
+        WearableDeviceRegistry.shared.registerDevice(wearable: Friend.self)
+        let manager = BLEManager(deviceRegistry: WearableDeviceRegistry.shared)
+        manager.delegate = self
+        bleManager = manager
+        let device = Friend(bleManager: manager, name: "Omi")
+        device.id = id
+        return device
+    }
+
     func connectToDevice(device: Friend) {
         print("[Omi] connecting to discovered device")
         let deviceUUID = device.id
         bleManager!.reconnect(to: deviceUUID)
-        self.connectionCompletion?(true)
         self.startRecordingWhenReady(device: device)
     }
 }
 
 extension FriendManager: BLEManagerDelegate {
+    func establishedConnection() {
+        connectionCompletion?(true)
+    }
+
     func lostConnection() {
         connectionCompletion?(false)
     }

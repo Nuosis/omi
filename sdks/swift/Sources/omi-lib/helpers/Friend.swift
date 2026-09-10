@@ -26,12 +26,15 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     @Published var isRecording = false
     var recording: Recording?
     
+    var onReady: (() -> Void)?
+
     private var codec: FriendCodec? {
         didSet {
             if codec == nil {
                 status = .error(message: "Unsupported audio codec")
             } else {
                 status = .ready
+                onReady?()
             }
         }
     }
@@ -151,9 +154,7 @@ class Friend : WearableDevice, BatteryInformation, AudioRecordingDevice {
     func snapshotRecording() throws -> URL? {
         flushRecordingBuffer()
         guard let recording else { return nil }
-        let snapshotURL = try makeOmiAudioSnapshot(from: recording.fileURL)
-        recording.updateFileURL()
-        return snapshotURL
+        return try recording.snapshotRecording()
     }
     
     @discardableResult

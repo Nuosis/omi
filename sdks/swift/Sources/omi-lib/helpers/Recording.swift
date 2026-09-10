@@ -127,6 +127,19 @@ class Recording: Identifiable {
         }
     }
     
+    /// Close the WAV before handing it off so its header contains final frame counts.
+    func snapshotRecording() throws -> URL? {
+        guard let codec else { return nil }
+        let completed = fileURL
+        recordingFile = nil
+        filename = "Recording_\(UUID().uuidString).wav"
+        guard startRecording(usingCodec: codec) else {
+            throw NSError(domain: "OmiAudio", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Cannot rotate audio recording"])
+        }
+        return completed
+    }
+
     func closeRecording() {
         recordingFile = nil
         codec = nil

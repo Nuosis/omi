@@ -97,7 +97,8 @@ Get transcription working in 2 minutes:
 |--------|-------------|
 | `startScan(callback)` | Start scanning for Omi devices |
 | `endScan()` | Stop scanning |
-| `connectToDevice(device)` | Connect to a discovered device |
+| `connectToDevice(device)` | Connect to a discovered or previously paired device |
+| `knownDevice(id:)` | Prepare a saved peripheral UUID for reconnection |
 | `connectionUpdated(callback)` | Monitor connection state changes |
 | `getLiveTranscription(device, callback)` | Receive real-time transcription |
 | `getLiveAudio(device, callback)` | Receive audio file URLs |
@@ -113,3 +114,28 @@ Get transcription working in 2 minutes:
     View source code and contribute
   </Card>
 </CardGroup>
+
+
+## Background audio capture (Claire fork)
+
+`getLiveAudio` delivers finalized mono PCM WAV files at packet boundaries about
+30 seconds apart. `stopLiveTranscription` delivers the remaining partial file
+before disconnecting. The caller owns each file and must persist/upload it and
+then delete it. Raw capture does not load Whisper.
+
+For automatic power-on capture, save the UUID from explicit initial pairing.
+On later launches, register connection/audio callbacks, obtain `knownDevice(id:)`,
+and call `connectToDevice`. Core Bluetooth waits for that exact peripheral;
+unknown UUIDs use service-filtered discovery. Codec notifications start recording
+without readiness timers. Stop cancels both pending connections and capture.
+
+The host app must declare `bluetooth-central` background mode, recreate its
+listening owner on launch, and persist the user's enabled/paused intent. The BLE
+manager uses restoration identifier `omi.listen.connection`; this SDK manages
+one capture device at a time. Force-quitting the app requires reopening it.
+See [Apple background processing](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html).
+
+Focused verification: `swift test --filter 'OmiRecording|OmiPacket'` exercises
+WAV rotation/frame preservation, packet scheduling, codec-triggered recording,
+and cancellation before another codec event. These are functional software
+tests, not evidence of a real iPhone/Omi background power cycle or battery life.

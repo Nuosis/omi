@@ -21,6 +21,7 @@ enum BLEStatus {
 }
 
 protocol BLEManagerDelegate: AnyObject {
+    func establishedConnection()
     func lostConnection()
 }
 
@@ -51,16 +52,20 @@ class BLEManager : NSObject, ObservableObject {
     private var peripheralToConnect: CBPeripheral?
 
     func reconnect(to: UUID) {
-        if manager == nil {
-            manager = CBCentralManager(delegate: self, queue: nil)
-        }
         uuidToConnect = to
+        if manager == nil {
+            manager = CBCentralManager(delegate: self, queue: nil, options: [
+                CBCentralManagerOptionRestoreIdentifierKey: "omi.listen.connection"
+            ])
+        }
         if let manager, manager.state == .poweredOn {
             forceConnect()
         }
     }
     
     func stopConnecting() {
+        uuidToConnect = nil
+        manager?.stopScan()
         if let manager, let peripheralToConnect {
             manager.cancelPeripheralConnection(peripheralToConnect)
         }
@@ -84,15 +89,28 @@ class BLEManager : NSObject, ObservableObject {
             if let p = manager.retrievePeripherals(withIdentifiers: [uuid]).first {
                 peripheralToConnect = p
                 status = .connecting
-                manager.connect(p, options: [CBConnectPeripheralOptionNotifyOnDisconnectionKey: true])
+                if p.state == .connected {
+                    centralManager(manager, didConnect: p)
+                } else if p.state != .connecting {
+                    manager.connect(p, options: [CBConnectPeripheralOptionNotifyOnDisconnectionKey: true])
+                }
                 // connect do not timeout, need to explicitly cancel it
+                uuidToConnect = nil
+            } else {
+                manager.scanForPeripherals(withServices: [Friend.deviceConfiguration.scanServiceUUID])
             }
-            uuidToConnect = nil
         }
     }
 }
 
 extension BLEManager : CBCentralManagerDelegate {
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        // reconnect(to:) has already registered the saved device UUID. The
+        // powered-on callback reattaches service/codec observers to that device.
+        let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        peripheralToConnect = restored.first { $0.identifier == uuidToConnect }
+    }
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         status = (central.state == .poweredOn ? .on : .off)
@@ -102,8 +120,18 @@ extension BLEManager : CBCentralManagerDelegate {
         }
     }
     
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        guard peripheral.identifier == uuidToConnect else { return }
+        central.stopScan()
+        peripheralToConnect = peripheral
+        uuidToConnect = nil
+        central.connect(peripheral, options: [CBConnectPeripheralOptionNotifyOnDisconnectionKey: true])
+    }
+
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = .connected
+        delegate?.establishedConnection()
         print("[Omi] BLE connected")
         self.peripheral = peripheral
         log.info("Did connect to peripheral with identifier: \(peripheral.identifier)")
